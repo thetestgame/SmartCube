@@ -67,7 +67,12 @@ String powerFeed = "";
 #define ZPLASMA 1
 #define SQUARRAL 2
 #define SNAKE 3
-#define ROUTINES 4
+#define FFTJOY 4
+#define PURPLERAIN 5
+#define PARTICLES 6
+#define LIFE 7
+#define PACMAN 8
+#define ROUTINES 9
 int activeAnimation = 0;
 
 /******************************
@@ -131,8 +136,18 @@ MQTT client(mqttHost, mqttPort, MQTTcallback);
  * ***************************/
 #define NORMAL 0
 #define STREAMING 1
+#define PLAYLIST 2
  int mode = NORMAL;
  
+ /******************************
+ * Playlist definitions
+ * ***************************/
+#define WHITELIST 1
+#define BLACKLIST 2
+
+int playlistType = WHITELIST;
+std::vector< int > playlist;
+
 /******************************
  * fireworks variables *
  * ****************************/
@@ -228,6 +243,71 @@ std::vector<voxel> possibleDirections = {
   { 0,  0, -1}
 };
 
+/*********************************
+ * FFTJoy variables *
+ * *******************************/
+#define M 4
+float real[(int)pow(2,M)];
+float imaginary[(int)pow(2,M)];
+float maximum=0;
+float sample;
+
+/*******************************
+ * purple rain variables *
+ * ****************************/
+
+#define MIN_SALVO_SPACING 0
+int startAt = 3;	//[0=base|1=center|2=top|3=random]
+int minimum=0;
+int threshhold;
+float sensitivity=0;
+bool aboveThreshhold=false;
+int timeAboveThreshhold;
+int maxAmplitude=0;
+int fadingMax=25;
+
+typedef struct {
+	Point raindrop;
+  	float speed;
+  	Color color;
+  	bool flipped;
+  	bool dead;
+} raindrop;
+
+typedef struct {
+    raindrop raindrops[MAX_POINTS];
+    bool dead;
+} salvo;
+ 
+salvo salvos[8];
+
+/*******************************
+ * particles variables *
+ * ****************************/
+
+#define MAX_DOTS 15
+Point dots[MAX_DOTS];
+Point dir[MAX_DOTS];
+Color clr[MAX_DOTS];
+int lastRand = 0;
+int lastLastRand = 0;
+
+/*******************************
+ * life 3d variables *
+ * ****************************/
+
+int iterationCount = 0;
+Color deadColor = Color(0, 0, 0);
+
+/*******************************
+ * pacman variables *
+ * ****************************/
+
+#define SPEED 10
+int pacmanFrame=0;
+Color voxelColor;
+void rotate_x(Point& a, int b);
+
 /**************************************
  * startup and loop functions *
  * ************************************/
@@ -258,6 +338,9 @@ void initAnimations() {
     initFireworks();
     initSquarral();
     initSnake();
+    initPurpleRain();
+    initParticles();
+    initLife();
 }
 
 void initCube() {
@@ -319,10 +402,29 @@ void loop() {
             case (SNAKE):
                 runSnake();
                 break;
+            case (FFTJOY):
+                FFTJoy();
+                break;
+            case (PURPLERAIN):
+                runPurpleRain();
+                break;
+            case (PARTICLES):
+                runParticles();
+                break;
+            case (LIFE):
+                runLife();
+                break;
+            case (PACMAN):
+                runPacman();
+                break;
             default:
                 updateFireworks();
                 break;
         }
+    }
+    
+    if (mode == PLAYLIST) {
+    
     }
         
     //check to see how if the cube has been flipped if its enabled
@@ -331,6 +433,14 @@ void loop() {
     }
         
     cube.show();
+    
+    
+    if(!animationLocked)
+        if(millis()-lastAutoCycle>AutocyleTime)   //in autocycle, change demos every 15 seconds
+        {
+            incrementAnimation();
+            lastAutoCycle=millis();
+        }
     
     if(fading) {
         fadeValue-=fadeSpeed;
@@ -343,13 +453,6 @@ void loop() {
         else
             fade();
     }
-    
-    if(!animationLocked)
-        if(millis()-lastAutoCycle>AutocyleTime)   //in autocycle, change demos every 15 seconds
-        {
-            incrementAnimation();
-            lastAutoCycle=millis();
-        }
 }
 
 /***********************************
@@ -443,13 +546,16 @@ void initParticleVariables() {
         Particle.variable("mode", &mode, INT);
         Particle.variable("maxBrightness", &maxBrightness, INT);
         Particle.variable("autocyleTime", &AutocyleTime, INT);
+        Particle.variable("animation", &activeAnimation, INT);
+        //Particle.variable("locked", &animationLocked, INT);
         
+        Particle.function("setMode", (int (*)(String)) setMode);
         Particle.function("setLock", (int (*)(String)) lockAnimation);
         Particle.function("setPower", (int (*)(String)) setPower);
-        Particle.function("setAnimation", (int (*)(String)) setAnimation);
-        Particle.function("setBrightness", (int (*)(String)) setBrightness);
-        Particle.function("enableDebugMode", (int (*)(String)) enableDebugMode);
-        Particle.function("getMicrophone", (int (*)(String)) getMicrophone);
+        Particle.function("setDisplay", (int (*)(String)) setAnimation);
+        //Particle.function("setBrightness", (int (*)(String)) setBrightness);
+        //Particle.function("enableDebugMode", (int (*)(String)) enableDebugMode);
+        //Particle.function("getMicrophone", (int (*)(String)) getMicrophone);
     }
     
     if (particleFeeds) {
@@ -484,6 +590,10 @@ void ParticleHandler(const char *event, const char *data) {
     if (event == particleAnimationFeed) {
 
     }
+}
+
+int setMode(String _incoming) {
+    return 0;
 }
 
 int lockAnimation(String _incoming) {
@@ -553,7 +663,30 @@ int enableDebugMode(String _incoming) {
 }
 
 int getMicrophone() {
-    return (int) analogRead(MICROPHONE)-2048;
+    return (int) analogRead(MICROPHONE);
+}
+
+int addToPlaylist(String _incoming) {
+    int id = _incoming.toInt();
+    //debug("Adding animation #" + id + " to playlist");
+    playlist.push_back(id);
+    return 1;
+}
+
+int eraseFromPlaylist(String _incoming) {
+    int id = _incoming.toInt();  
+    //debug("Removing animation #" + id + " to playlist");
+    int pos = -1;
+    for (unsigned i=0; i<playlist.size(); i++) {
+        if (playlist.at(i)=id) {
+            pos = i;
+        }
+    }
+    if (pos != -1) {
+        std::vector<int>::iterator it = playlist.begin();
+        std::advance(it, pos);
+        playlist.erase(it);
+    }
 }
 
  /**********************************
@@ -1154,4 +1287,801 @@ void runSnake() {
 
 void initSnake() {
     resetSnake();    
+}
+
+/********************************************
+ *   FFT JOY functions
+ * *****************************************/
+ void FFTJoy(){
+    for(int i=0;i<pow(2,M);i++)
+    {
+        real[i]=analogRead(MICROPHONE)-2048;
+        delayMicroseconds(212);  //this sets our 'sample rate'.  I went through a bunch of trial and error to 
+                                //find a good sample rate to put a soprano's vocal range in the spectrum of the cube
+      //  Serial.print(real[i]);
+        imaginary[i]=0;
+    }
+    FFT(1, M, real, imaginary);
+    for(int i=0;i<pow(2,M);i++)
+    {
+        imaginary[i]=sqrt(pow(imaginary[i],2)+pow(real[i],2));
+//        Serial.print(imaginary[i]);
+        if(imaginary[i]>maximum)
+            maximum=imaginary[i];
+    }
+    if(maximum>100)
+        maximum--;
+//    Serial.println();
+    for(int i=0;i<pow(2,M)/2;i++)
+    {
+        imaginary[i]=SIDE*imaginary[i]/maximum;
+        int y;
+        for(y=0;y<=imaginary[i];y++)
+            setPixel(i,y,SIDE-1,ColorMap(y,0,SIDE));
+        for(;y<SIDE;y++)
+            setPixel(i,y,SIDE-1,black);
+    }
+    for(int z=0;z<SIDE-1;z++)
+        for(int x=0;x<SIDE;x++)
+            for(int y=0;y<SIDE;y++)
+            {
+                Color col=getPixel(x,y,z+1);
+                setPixel(x,y,z,col);
+//                char output[50];
+//                sprintf(output, "%d %d %d:  %d %d %d", x,y,z+1, col.red, col.green, col.blue);
+//                Serial.println(output);
+            }
+
+    sample++;
+    if(sample>=pow(2,M))
+        sample-=pow(2,M);
+}
+
+short FFT(short int dir,int m,float *x,float *y)
+{
+   int n,i,i1,j,k,i2,l,l1,l2;
+   float c1,c2,tx,ty,t1,t2,u1,u2,z;
+
+   /* Calculate the number of Points */
+   n = 1;
+   for (i=0;i<m;i++) 
+      n *= 2;
+
+   /* Do the bit reversal */
+   i2 = n >> 1;
+   j = 0;
+   for (i=0;i<n-1;i++) {
+      if (i < j) {
+         tx = x[i];
+         ty = y[i];
+         x[i] = x[j];
+         y[i] = y[j];
+         x[j] = tx;
+         y[j] = ty;
+      }
+      k = i2;
+      while (k <= j) {
+         j -= k;
+         k >>= 1;
+      }
+      j += k;
+   }
+
+   /* Compute the FFT */
+   c1 = -1.0; 
+   c2 = 0.0;
+   l2 = 1;
+   for (l=0;l<m;l++) {
+      l1 = l2;
+      l2 <<= 1;
+      u1 = 1.0; 
+      u2 = 0.0;
+      for (j=0;j<l1;j++) {
+         for (i=j;i<n;i+=l2) {
+            i1 = i + l1;
+            t1 = u1 * x[i1] - u2 * y[i1];
+            t2 = u1 * y[i1] + u2 * x[i1];
+            x[i1] = x[i] - t1; 
+            y[i1] = y[i] - t2;
+            x[i] += t1;
+            y[i] += t2;
+         }
+         z =  u1 * c1 - u2 * c2;
+         u2 = u1 * c2 + u2 * c1;
+         u1 = z;
+      }
+      c2 = sqrt((1.0 - c1) / 2.0);
+      if (dir == 1) 
+         c2 = -c2;
+      c1 = sqrt((1.0 + c1) / 2.0);
+   }
+
+   /* Scaling for forward transform */
+   if (dir == 1) {
+      for (i=0;i<n;i++) {
+         x[i] /= n;
+         y[i] /= n;
+      }
+   }
+
+   return(0);
+}
+
+/***************************************
+ * purple rain functions *
+ * ***********************************/
+
+void checkMicrophone() {
+    int mic=analogRead(MICROPHONE);
+    if(mic<minimum)
+        minimum=mic;
+    if(mic>maximum)
+        maximum=mic;
+    float range=maximum-minimum;
+    int mean=range*.5;
+    /*
+    if(minimum<mean)
+        minimum++;
+    if(maximum>mean)
+        maximum--;
+        */
+    threshhold=mean+sensitivity*(range/2);
+ 
+    if(mic>threshhold) {
+        if((!aboveThreshhold)&&((timeAboveThreshhold-millis())>MIN_SALVO_SPACING)) {
+            launchRain(mic-threshhold);
+            aboveThreshhold=true;
+            timeAboveThreshhold=millis();
+        }
+    }
+    else
+        aboveThreshhold=false;
+/*
+    Serial.print(mic);
+    Serial.print(":  ");
+    Serial.print(threshhold);
+    Serial.print(" - above threshhold: ");
+    Serial.println(aboveThreshhold);
+    */
+}
+ 
+void launchRain(int amplitude) {
+    int i;
+    for(i=0;((i<cube.size)&&(!salvos[i].dead));i++)
+        ;
+    if(i<cube.size) {
+        if(amplitude>maxAmplitude)
+            maxAmplitude=amplitude;
+        
+      	int numDrops=map(amplitude,0, maxAmplitude,0, MAX_POINTS);
+        for(int j=0;j<numDrops;j++) {
+            salvos[i].dead=false;
+          	salvos[i].raindrops[j].dead=false;
+          	salvos[i].raindrops[j].flipped=false;
+          	salvos[i].raindrops[j].speed=setNewSpeed();
+            salvos[i].raindrops[j].raindrop.x=rand()%8;
+            salvos[i].raindrops[j].raindrop.z=rand()%8;
+			
+          	// Here we decide which point across the y-axis
+          	// will be our start location for the raindrop,
+          	// based on the value 'startAt' was initialized
+          	switch(startAt) {
+              case 0:	//base
+          		salvos[i].raindrops[j].raindrop.y=((rand()%10)-5)/10;
+                break;
+              case 1:	//center
+          		salvos[i].raindrops[j].raindrop.y=cube.size/2;
+                break;
+              case 2:	//top
+          		salvos[i].raindrops[j].raindrop.y=cube.size;
+                break;
+              case 3:	//random
+          		salvos[i].raindrops[j].raindrop.y=rand()%cube.size;
+                break;
+            }
+          
+			// Here's some cool combinations to try with cube.lerpColor():
+			// purple, magenta
+			// blue, pink
+			// purple, pink
+			// ..
+			// ..
+			// Go wild...
+          	salvos[i].raindrops[j].color=cube.lerpColor(purple, magenta, j, SPEED, MAX_POINTS);
+        }
+      
+        for(int j=numDrops;j<MAX_POINTS;j++) {
+            salvos[i].raindrops[j].raindrop.x=-1;
+            salvos[i].raindrops[j].raindrop.z=-1;
+        }
+    }
+}
+
+void drawSalvos() {
+    for(int i=0;i<cube.size;i++)
+        if(!salvos[i].dead)
+            for(int j=0;j<MAX_POINTS;j++)
+              	if(!salvos[i].raindrops[j].dead)
+                	setPixel(salvos[i].raindrops[j].raindrop.x, salvos[i].raindrops[j].raindrop.y, salvos[i].raindrops[j].raindrop.z, salvos[i].raindrops[j].color);
+}
+
+void updateSalvos() {
+    for(int i=0;i<cube.size;i++) {
+        for(int j=0;j<MAX_POINTS;j++) {
+            salvos[i].raindrops[j].raindrop.y+=salvos[i].raindrops[j].speed;
+          	if(salvos[i].raindrops[j].speed>0) {
+                if(salvos[i].raindrops[j].raindrop.y<cube.size) {
+                  	if(salvos[i].raindrops[j].flipped)
+                  		salvos[i].raindrops[j].color=cube.lerpColor(salvos[i].raindrops[j].color, black, abs(j-i), abs(salvos[i].raindrops[j].speed), fadingMax);
+                }
+                else {
+                  	if(salvos[i].raindrops[j].flipped)
+                      	salvos[i].raindrops[j].dead=true;
+                  	else {
+                        salvos[i].raindrops[j].speed=-salvos[i].raindrops[j].speed;
+                        salvos[i].raindrops[j].flipped=true;
+                    }
+                }
+            }
+          	else {
+                if(salvos[i].raindrops[j].raindrop.y>0) {
+                  	if(salvos[i].raindrops[j].flipped)
+                  		salvos[i].raindrops[j].color=cube.lerpColor(salvos[i].raindrops[j].color, black, abs(j-i), abs(salvos[i].raindrops[j].speed), fadingMax);
+                }
+                else {
+                  	if(salvos[i].raindrops[j].flipped)
+                      	salvos[i].raindrops[j].dead=true;
+                  	else {
+                      	salvos[i].raindrops[j].speed=-salvos[i].raindrops[j].speed;
+                      	salvos[i].raindrops[j].flipped=true;
+                    }
+                }
+            }
+        }
+      	
+    	int offCube=true;
+      	for(int j=0;j<MAX_POINTS;j++) {
+          	if(!salvos[i].raindrops[j].dead) {
+				offCube=false;
+              	break;
+            }
+        }
+      	if(offCube)
+            salvos[i].dead=true;
+    }
+}
+
+float setNewSpeed() {
+  	float ret;
+    int rndSpeed=0+(rand()%7);
+    switch(rndSpeed) {
+      case 0:
+        ret=0.5;
+        break;
+      case 1:
+        ret=-0.5;
+        break;
+      case 2:
+        ret=0.15;
+        break;
+      case 3:
+        ret=-0.15;
+        break;
+      case 4:
+        ret=0.25;
+        break;
+      case 5:
+        ret=-0.25;
+        break;
+      case 6:
+        ret=0.35;
+        break;
+      case 7:
+        ret=-0.35;
+        break;
+      default:
+        ret=SPEED;
+        break;
+    }
+  	return ret;
+}
+
+void initSalvos() {
+    for(int i=0;i<cube.size;i++) {
+        for(int j=0;j<MAX_POINTS;j++) {
+            salvos[i].raindrops[j].raindrop.x=-1;
+            salvos[i].raindrops[j].raindrop.z=-1;
+          	salvos[i].raindrops[j].speed=0;
+          	salvos[i].raindrops[j].flipped=false;
+          	salvos[i].raindrops[j].color=black;
+          	salvos[i].raindrops[j].dead=true;
+        }
+        salvos[i].dead=true;
+    }
+}
+
+void runPurpleRain() {
+  	background(black);
+	checkMicrophone();
+  	updateSalvos();
+    drawSalvos();
+  	delay(10);
+}
+
+void initPurpleRain() {
+  initMicrophone();
+  initSalvos();    
+}
+
+/***************************************
+ * particles functions *
+ * ***********************************/
+
+int strongColor() {
+  return random(3,13);
+}
+
+int weakColor() {
+  return random(2);
+}
+
+void randomColor(struct Color *clr) {
+  int r;
+  do {
+    r = random(7);
+  } while (r == lastRand || r == lastLastRand);
+  
+  switch (r) {
+    case 0: 
+      clr->red   = strongColor();
+      clr->green = strongColor();
+      clr->blue  = strongColor();
+      break;
+    case 1: 
+      clr->red   = strongColor();
+      clr->green = weakColor();
+      clr->blue  = weakColor();
+      break;
+    case 2: 
+      clr->red   = weakColor();
+      clr->green = strongColor();
+      clr->blue  = weakColor();
+      break;
+    case 3: 
+      clr->red   = weakColor();
+      clr->green = weakColor();
+      clr->blue  = strongColor();
+      break;
+    case 4: 
+      clr->red   = weakColor();
+      clr->green = strongColor();
+      clr->blue  = strongColor();
+      break;
+    case 5: 
+      clr->red   = strongColor();
+      clr->green = weakColor();
+      clr->blue  = strongColor();
+      break;
+    case 6: 
+      clr->red   = strongColor();
+      clr->green = strongColor();
+      clr->blue  = weakColor();
+      break;
+  }
+  lastLastRand = lastRand;
+  lastRand = r;
+}
+
+int wrapIf (int n) {
+    if (n >= cube.size) n = 0;
+    if (n < 0) n = cube.size - 1;
+    return n;
+}
+
+void runParticles() {
+ delay(100);
+ for (int i=0; i<MAX_DOTS; i++) {
+    cube.setVoxel(dots[i], Color(clr[i].red/8, clr[i].green/8, clr[i].blue/8));
+    dots[i].x += dir[i].x;
+    dots[i].y += dir[i].y;
+    dots[i].z += dir[i].z;
+    dots[i].x = wrapIf(dots[i].x);
+    dots[i].y = wrapIf(dots[i].y);
+    dots[i].z = wrapIf(dots[i].z);
+    Color test = cube.getVoxel(dots[i]);
+    Color uc = clr[i];
+    bool bang = false;
+    if (test.red != 0 || test.green != 0 || test.blue != 0) bang = true;
+    if (bang) uc = Color(128, 128, 128);
+    if (bang) cube.sphere(dots[i], 1, Color(4, 4, 4));
+    cube.setVoxel(dots[i], uc);
+    if (bang) dots[i] = { rand()%cube.size, rand()%cube.size, rand()%cube.size };
+   }
+
+  for (int i=0; i<MAX_DOTS; i++) {
+    if (rand()%16 != 0) continue;
+    // NYI - share code with setup
+    int d[3], a;
+    do {
+      d[0] = rand()%3-1;
+      d[1] = rand()%3-1;
+      d[2] = rand()%3-1;
+      a = abs(d[0]) + abs(d[1]) + abs(d[2]);
+    } while (a != 1);
+    dir[i] = { d[0], d[1], d[2] };
+  }
+}
+
+void initParticles() {
+  for (int i=0; i<MAX_DOTS; i++) {
+    dots[i] = { rand()%cube.size, rand()%cube.size, rand()%cube.size };
+    //clr[i] = Color(rand()%16, rand()%16, rand()%16);
+    randomColor(&clr[i]);
+    int d[3], a;
+    do {
+      d[0] = rand()%3-1;
+      d[1] = rand()%3-1;
+      d[2] = rand()%3-1;
+      a = abs(d[0]) + abs(d[1]) + abs(d[2]);
+    } while (a != 1);
+    dir[i] = { d[0], d[1], d[2] };
+  }
+}
+
+/***************************************
+ * life 3d functions *
+ * ***********************************/
+
+void resetCube() {
+  cube.background(deadColor);
+  int randSeed = random(0, 100) * analogRead(0);
+  randomSeed(randSeed);
+  for (int i=0; i<8; i++) {
+    for (int j=0; j<8; j++) {
+      for (int k=0; k<8; k++) {
+        if ((random(1, 100) > 40)) {
+          cube.setVoxel(i, j, k, Color((i+1)*255/60,(j+1)*255/60,(k+1)*255/60));
+        }
+      }
+    }
+  }
+  cube.show();
+}
+
+int countNeighbors(int x, int y, int z) {
+  int count = 0;
+  for (int i=x-1; i<x+2; i++) {
+    for (int j=y-1; j<y+2; j++) {
+      for (int k=z-1; k<z+2; k++) {
+        if ((i >= 0 && j >= 0 && k >= 0) && (i<=7 && j<=7 && k<=7) && !(i == x && j==y && k==z) && cube.getVoxel(i,j,k) != deadColor) {
+          count++;
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
+void initLife() {
+  resetCube();
+}
+
+
+void runLife() {  
+  int changeCount = 0;
+  int neighbourCount = 0;
+  bool aliveNow;
+  bool aliveNext;
+
+  bool liveMap[8][8][8];
+
+  for (int i=0; i<8; i++) {
+    for (int j=0; j<8; j++) {
+      for (int k=0; k<8; k++) {
+        neighbourCount = countNeighbors(i, j, k);
+        aliveNow = cube.getVoxel(i, j, k) != deadColor;
+        aliveNext = (aliveNow && neighbourCount > 2 && neighbourCount < 8) || (!aliveNow && neighbourCount == 5);
+        liveMap[i][j][k] = aliveNext;
+        if (aliveNow != aliveNext) {
+          changeCount++;
+        }
+      }
+    }
+  }
+
+  
+  cube.background(deadColor);
+  for (int i=0; i<8; i++) {
+    for (int j=0; j<8; j++) {
+      for (int k=0; k<8; k++) {
+        if (liveMap[i][j][k]) {
+          cube.setVoxel(i, j, k, Color((i+1)*255/60,(j+1)*255/60,(k+1)*255/60));
+        } else {
+          cube.setVoxel(i, j, k, deadColor);
+        }
+      }
+    }
+  }
+  
+  iterationCount++;
+  
+  if (changeCount) {
+    delay(10);
+  } else {
+    delay(1000);
+    resetCube();
+    iterationCount = 0;
+  }
+  //Set Maximum number of iterations here...
+  if (iterationCount > 100) {
+    delay(1000);
+    resetCube();
+    iterationCount = 0;
+  }
+  cube.show();
+}
+
+/***************************************
+ * pacman functions *
+ * ***********************************/
+
+void runPacman() {
+  background(black);
+  int spritesize = 65;
+  Point pacman[spritesize],
+      ghost[spritesize],
+      ghostface[spritesize],
+      ghosteye[spritesize];
+
+  for(int i=spritesize-1;i>0;i--){
+      pacman[i]={-1,-1,-1};
+      ghost[i]={-1,-1,-1};
+      ghostface[i]={-1,-1,-1};
+      ghosteye[i]={-1,-1,-1};
+    }
+
+  ghost[ 1]={3,6,0};
+  ghost[ 2]={4,6,0};
+  ghost[ 3]={5,6,0};
+  ghost[ 4]={2,5,0};
+  ghost[ 5]={3,5,0};
+  ghost[ 6]={4,5,0};
+  ghost[ 7]={5,5,0};
+  ghost[ 8]={6,5,0};
+  ghost[ 9]={1,4,0};
+  ghost[10]={2,4,0};
+  ghost[11]={3,4,0};
+  ghost[12]={4,4,0};
+  ghost[13]={5,4,0};
+  ghost[14]={6,4,0};
+  ghost[15]={7,4,0};
+  ghost[16]={1,3,0};
+  ghost[17]={2,3,0};
+  ghost[18]={3,3,0};
+  ghost[19]={4,3,0};
+  ghost[20]={5,3,0};
+  ghost[21]={6,3,0};
+  ghost[22]={7,3,0};
+  ghost[23]={1,2,0};
+  ghost[24]={2,2,0};
+  ghost[25]={3,2,0};
+  ghost[26]={4,2,0};
+  ghost[27]={5,2,0};
+  ghost[28]={6,2,0};
+  ghost[29]={7,2,0};
+
+  ghosteye[1]={3,5,0};
+  ghosteye[2]={5,5,0};
+  ghosteye[3]={3,4,0};
+  ghosteye[4]={5,4,0};
+        
+    ghostface[1]={2,2,0};
+    ghostface[2]={3,3,0};
+    ghostface[3]={4,2,0};
+    ghostface[4]={5,3,0};
+    ghostface[5]={6,2,0};
+    ghostface[6]={5,5,0};
+    ghostface[7]={3,5,0};
+    
+    
+    pacman[ 1]={4,6,7};
+    pacman[ 2]={3,6,7};
+    pacman[ 3]={2,6,7};
+    pacman[ 4]={4,5,7};
+    pacman[ 5]={3,5,7};
+    pacman[ 6]={2,5,7};
+    pacman[ 7]={1,5,7};
+    pacman[ 8]={3,4,7};
+    pacman[ 9]={2,4,7};
+    pacman[10]={1,4,7};
+    pacman[11]={0,4,7};
+    pacman[12]={1,3,7};
+    pacman[13]={0,3,7};
+    pacman[14]={3,2,7};
+    pacman[15]={2,2,7};
+    pacman[16]={1,2,7};
+    pacman[17]={0,2,7};
+    pacman[18]={4,1,7};
+    pacman[19]={3,1,7};
+    pacman[20]={2,1,7};
+    pacman[21]={1,1,7};
+    pacman[22]={4,0,7};
+    pacman[23]={3,0,7};
+    pacman[24]={2,0,7};
+    pacman[25]={2,3,7};
+    switch(pacmanFrame%32){
+        case 1 ... 15:
+      ghost[30]={2,1,0};
+      ghost[31]={4,1,0};
+      ghost[32]={6,1,0};
+      ghost[33]={2,0,0};
+      ghost[34]={4,0,0};
+      ghost[35]={6,0,0};
+      break;
+        default:
+          ghost[30]={1,1,0};
+      ghost[31]={3,1,0};
+      ghost[32]={5,1,0};
+      ghost[33]={7,1,0};
+          ghost[34]={1,0,0};
+      ghost[35]={3,0,0};
+      ghost[36]={5,0,0};
+      ghost[37]={7,0,0};
+        break;
+    }
+    switch(pacmanFrame%32){
+        case 0: case 31:
+        pacman[37]={6,3,7};
+        case 1: case 30:
+        case 2: case 29:
+        pacman[26]={5,3,7};
+        case 3: case 28:
+        pacman[27]={6,2,7};
+        pacman[28]={6,4,7};
+        case 4: case 27:
+        pacman[29]={4,3,7};
+        case 5: case 26:
+        case 6: case 25:
+        pacman[30]={5,4,7};
+        pacman[31]={5,2,7};
+        case 7: case 24:
+        pacman[32]={5,5,7};
+        pacman[33]={4,4,7};
+        pacman[34]={3,3,7};
+        pacman[35]={4,2,7};
+        pacman[36]={5,1,7};
+        default:
+        break;
+    }
+
+    Color blinky = {50,0,0};
+    Color pinky = {50,9,46};
+    Color inky = {0,0,50};
+    Color clyde = {50,30,0};
+    Color ghost_white = {50,50,50};
+    Color ghost_blue = {19, 18, 42};
+    Color ghostface_white = {50,0,0};
+    Color ghostface_normal = {50,50,50};
+    Color ghostface_blue = {50, 41, 28};
+    Color ghost1 = ghost_white;
+    Color ghostface1;
+    Color ghost2 = ghost_white;
+    Color ghostface2;
+    int direction;
+    int phase = pacmanFrame%(100*SPEED);
+    if(phase<50*SPEED){
+        direction=1;
+        ghost1=blinky;
+        ghostface1=ghostface_normal;
+        ghost2=clyde;
+        ghostface2=ghostface_normal;
+    }else{
+        direction=-1;
+        
+      for(int i=spritesize-1;i>0;i--){  // We need to flip the sprites around 
+          pacman[i].x=(7-pacman[i].x); 
+          ghost[i].x=(7-ghost[i].x);
+          ghostface[i].x=(7-ghostface[i].x);
+          ghosteye[i].x=(7-ghosteye[i].x);
+        }
+        
+        
+        if((phase/10)%2){
+            ghost1=ghost_white;
+            ghostface1=ghostface_white;
+            ghost2=ghost_white;
+            ghostface2=ghostface_white;
+        }else{
+            ghost1=ghost_blue;
+            ghostface1=ghostface_blue;
+            ghost2=ghost_blue;
+            ghostface2=ghostface_blue;
+        }
+    }
+    int start_delay = 1;
+  for(int i=spritesize-1;i>0;i--){
+      
+      if(pacmanFrame>(start_delay*SPEED)){
+          rotate_x(pacman[i],pacmanFrame%(28*SPEED)*direction);
+          rotate_x(pacman[i],(1*SPEED*direction));// move pacman ahead of ghosts
+      }
+      if(direction<0){
+           rotate_x(pacman[i],(-5*SPEED));
+      }
+        
+        rotate_x(pacman[i],(1*SPEED*direction));// move pacman ahead of ghosts
+    cube.setVoxel(pacman[i].x,pacman[i].y,pacman[i].z,{50,46,0});
+
+      if(pacmanFrame>(start_delay*SPEED)){rotate_x(ghosteye[i],pacmanFrame%(28*SPEED)*direction);}
+    cube.setVoxel(ghosteye[i].x,ghosteye[i].y,ghosteye[i].z,ghostface1);
+      rotate_x(ghosteye[i],(8*SPEED*direction));
+      rotate_x(ghosteye[i],(1*SPEED*direction));//makes red look forward
+    cube.setVoxel(ghosteye[i].x,ghosteye[i].y,ghosteye[i].z,ghostface2);
+    
+   //   if(pacmanFrame>(50*SPEED)){rotate_x(ghostface[i],pacmanFrame%(28*SPEED));}
+  ////  cube.setVoxel(ghostface[i].x,ghostface[i].y,ghostface[i].z,{50,30,50});
+   //   rotate_x(ghostface[i],(8*SPEED));
+  //  cube.setVoxel(ghostface[i].x,ghostface[i].y,ghostface[i].z,{50,50,50 });
+
+      if(pacmanFrame>(start_delay*SPEED)){rotate_x(ghost[i],pacmanFrame%(28*SPEED)*direction);}
+    cube.setVoxel(ghost[i].x,ghost[i].y,ghost[i].z,ghost1);
+      rotate_x(ghost[i],(8*SPEED*direction));
+    cube.setVoxel(ghost[i].x,ghost[i].y,ghost[i].z,ghost2);
+  }
+  pacmanFrame++;
+  
+}
+
+void rotate_x(Point& a, int b)
+{
+    if(b>0){
+        for(int i=abs(b)/SPEED;i>0;i--){
+            if(a.z==7){
+               if(a.x<7)
+                    a.x+=1;
+                else 
+                    a.z-=1;
+            }else if(a.x==7){
+                if(a.z>0)
+                    a.z-=1;
+                else 
+                    a.x-=1;
+            }else if(a.z==0){
+               if(a.x>0)
+                    a.x-=1;
+                else 
+                    a.z+=1;
+            }else if(a.x==0){
+                if(a.z<7)
+                    a.z+=1;
+                else 
+                    a.x-=1;
+            }
+        }
+    }else{
+        for(int i=abs(b)/SPEED;i>0;i--){
+            if(a.z==7){
+               if(a.x>0)
+                    a.x-=1;
+                else
+                    a.z-=1;
+            }else if(a.x==7){
+                if(a.z<7)
+                    a.z+=1;
+                else 
+                    a.x+=1;
+            }else if(a.z==0){
+               if(a.x<7)
+                    a.x+=1;
+                else
+                   a.z-=1;
+            }else if(a.x==0){
+                if(a.z>0)
+                    a.z-=1;
+                else 
+                    a.x+=1;
+            }
+        }
+    }
 }
