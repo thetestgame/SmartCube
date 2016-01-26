@@ -18,7 +18,7 @@
 * <a href="https://github.com/hirotakaster/MQTT">MQTT</a>
  
 ### SmartThings
-<b>COMING SOON</b>
+<a href="https://github.com/thetestgame/SmartThingsProjects/tree/master/devicetypes/thetestgame/l3d-smart-cube.src">Devicetype</a>
 
 ### Libraries
 Libraries used to control the SmartCube remotely
