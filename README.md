@@ -5,6 +5,7 @@
 * Particle REST api
 * Particle api feed/event support
 * MQTT Support
+* EEPROM persistent data
 * <a href="https://www.smartthings.com/">SmartThings</a> support
 
 ### Animations
