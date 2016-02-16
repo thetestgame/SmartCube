@@ -1,5 +1,5 @@
 # SmartCube
-<b> V2.0.0 BETA</b> 
+<b> V2.0.1 BETA</b> 
 
 ### Features
 * Particle REST api
@@ -13,6 +13,8 @@
 * ZPlasma
 * Squarral
 * Snake by Ben (Cubetube.org)
+* Life 3D by Ben (Cubetube.org)
+* Puck Dude by Batman (Cubetube.org)
 
 ###Dependencies
 * <a href="https://github.com/wmoecke/beta-cube-library-v3">BETA-CUBE-LIBRARY-V3.1</a>
