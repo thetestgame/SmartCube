@@ -21,10 +21,11 @@
 * <a href="https://github.com/hirotakaster/MQTT">MQTT</a>
  
 ### SmartThings
-<b>Coming soon!</b>
+<b>SmartThings support is currently in BETA</b><br/>
+<a href="https://github.com/thetestgame/SmartThingsProjects/tree/master/devicetypes/thetestgame/l3d-smart-cube.src">Devicetype</a>
 
 ### MQTT/Adafruit.io
-<b>Coming soon!</b>
+<b>Documentation coming soon!</b>
 
 ### Libraries
 Libraries used to control the SmartCube remotely
