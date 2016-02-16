@@ -68,11 +68,10 @@ String powerFeed = "";
 #define SQUARRAL 2
 #define SNAKE 3
 #define FFTJOY 4
-#define PURPLERAIN 5
-#define PARTICLES 6
-#define LIFE 7
-#define PACMAN 8
-#define ROUTINES 9
+#define PARTICLES 5
+#define LIFE 6
+#define PACMAN 7
+#define ROUTINES 8
 int activeAnimation = 0;
 
 /******************************
@@ -249,7 +248,7 @@ std::vector<voxel> possibleDirections = {
 #define M 4
 float real[(int)pow(2,M)];
 float imaginary[(int)pow(2,M)];
-float maximum=0;
+float maxValue=0;
 float sample;
 
 /*******************************
@@ -323,7 +322,7 @@ void setup() {
     srand(seed);
     
     //Load settings from EEPROM
-    loadSettings();
+    //loadSettings();
     
     //Init things
     initCube();
@@ -338,7 +337,6 @@ void initAnimations() {
     initFireworks();
     initSquarral();
     initSnake();
-    initPurpleRain();
     initParticles();
     initLife();
 }
@@ -404,9 +402,6 @@ void loop() {
                 break;
             case (FFTJOY):
                 FFTJoy();
-                break;
-            case (PURPLERAIN):
-                runPurpleRain();
                 break;
             case (PARTICLES):
                 runParticles();
@@ -593,7 +588,9 @@ void ParticleHandler(const char *event, const char *data) {
 }
 
 int setMode(String _incoming) {
-    return 0;
+    int id = _incoming.toInt();
+    activeAnimation = id;
+    return activeAnimation;
 }
 
 int lockAnimation(String _incoming) {
@@ -1306,27 +1303,27 @@ void initSnake() {
     {
         imaginary[i]=sqrt(pow(imaginary[i],2)+pow(real[i],2));
 //        Serial.print(imaginary[i]);
-        if(imaginary[i]>maximum)
-            maximum=imaginary[i];
+        if(imaginary[i]>maxValue)
+            maxValue=imaginary[i];
     }
-    if(maximum>100)
-        maximum--;
+    if(maxValue>100)
+        maxValue--;
 //    Serial.println();
     for(int i=0;i<pow(2,M)/2;i++)
     {
-        imaginary[i]=SIDE*imaginary[i]/maximum;
+        imaginary[i]=cube.size*imaginary[i]/maxValue;
         int y;
         for(y=0;y<=imaginary[i];y++)
-            setPixel(i,y,SIDE-1,ColorMap(y,0,SIDE));
-        for(;y<SIDE;y++)
-            setPixel(i,y,SIDE-1,black);
+            cube.setVoxel(i,y,cube.size-1,cube.colorMap(y,0,cube.size));
+        for(;y<cube.size;y++)
+            cube.setVoxel(i,y,cube.size-1,black);
     }
-    for(int z=0;z<SIDE-1;z++)
-        for(int x=0;x<SIDE;x++)
-            for(int y=0;y<SIDE;y++)
+    for(int z=0;z<cube.size-1;z++)
+        for(int x=0;x<cube.size;x++)
+            for(int y=0;y<cube.size;y++)
             {
-                Color col=getPixel(x,y,z+1);
-                setPixel(x,y,z,col);
+                Color col=cube.getVoxel(x,y,z+1);
+                cube.setVoxel(x,y,z,col);
 //                char output[50];
 //                sprintf(output, "%d %d %d:  %d %d %d", x,y,z+1, col.red, col.green, col.blue);
 //                Serial.println(output);
@@ -1337,12 +1334,13 @@ void initSnake() {
         sample-=pow(2,M);
 }
 
+
 short FFT(short int dir,int m,float *x,float *y)
 {
    int n,i,i1,j,k,i2,l,l1,l2;
    float c1,c2,tx,ty,t1,t2,u1,u2,z;
 
-   /* Calculate the number of Points */
+   /* Calculate the number of points */
    n = 1;
    for (i=0;i<m;i++) 
       n *= 2;
@@ -1405,212 +1403,6 @@ short FFT(short int dir,int m,float *x,float *y)
    }
 
    return(0);
-}
-
-/***************************************
- * purple rain functions *
- * ***********************************/
-
-void checkMicrophone() {
-    int mic=analogRead(MICROPHONE);
-    if(mic<minimum)
-        minimum=mic;
-    if(mic>maximum)
-        maximum=mic;
-    float range=maximum-minimum;
-    int mean=range*.5;
-    /*
-    if(minimum<mean)
-        minimum++;
-    if(maximum>mean)
-        maximum--;
-        */
-    threshhold=mean+sensitivity*(range/2);
- 
-    if(mic>threshhold) {
-        if((!aboveThreshhold)&&((timeAboveThreshhold-millis())>MIN_SALVO_SPACING)) {
-            launchRain(mic-threshhold);
-            aboveThreshhold=true;
-            timeAboveThreshhold=millis();
-        }
-    }
-    else
-        aboveThreshhold=false;
-/*
-    Serial.print(mic);
-    Serial.print(":  ");
-    Serial.print(threshhold);
-    Serial.print(" - above threshhold: ");
-    Serial.println(aboveThreshhold);
-    */
-}
- 
-void launchRain(int amplitude) {
-    int i;
-    for(i=0;((i<cube.size)&&(!salvos[i].dead));i++)
-        ;
-    if(i<cube.size) {
-        if(amplitude>maxAmplitude)
-            maxAmplitude=amplitude;
-        
-      	int numDrops=map(amplitude,0, maxAmplitude,0, MAX_POINTS);
-        for(int j=0;j<numDrops;j++) {
-            salvos[i].dead=false;
-          	salvos[i].raindrops[j].dead=false;
-          	salvos[i].raindrops[j].flipped=false;
-          	salvos[i].raindrops[j].speed=setNewSpeed();
-            salvos[i].raindrops[j].raindrop.x=rand()%8;
-            salvos[i].raindrops[j].raindrop.z=rand()%8;
-			
-          	// Here we decide which point across the y-axis
-          	// will be our start location for the raindrop,
-          	// based on the value 'startAt' was initialized
-          	switch(startAt) {
-              case 0:	//base
-          		salvos[i].raindrops[j].raindrop.y=((rand()%10)-5)/10;
-                break;
-              case 1:	//center
-          		salvos[i].raindrops[j].raindrop.y=cube.size/2;
-                break;
-              case 2:	//top
-          		salvos[i].raindrops[j].raindrop.y=cube.size;
-                break;
-              case 3:	//random
-          		salvos[i].raindrops[j].raindrop.y=rand()%cube.size;
-                break;
-            }
-          
-			// Here's some cool combinations to try with cube.lerpColor():
-			// purple, magenta
-			// blue, pink
-			// purple, pink
-			// ..
-			// ..
-			// Go wild...
-          	salvos[i].raindrops[j].color=cube.lerpColor(purple, magenta, j, SPEED, MAX_POINTS);
-        }
-      
-        for(int j=numDrops;j<MAX_POINTS;j++) {
-            salvos[i].raindrops[j].raindrop.x=-1;
-            salvos[i].raindrops[j].raindrop.z=-1;
-        }
-    }
-}
-
-void drawSalvos() {
-    for(int i=0;i<cube.size;i++)
-        if(!salvos[i].dead)
-            for(int j=0;j<MAX_POINTS;j++)
-              	if(!salvos[i].raindrops[j].dead)
-                	setPixel(salvos[i].raindrops[j].raindrop.x, salvos[i].raindrops[j].raindrop.y, salvos[i].raindrops[j].raindrop.z, salvos[i].raindrops[j].color);
-}
-
-void updateSalvos() {
-    for(int i=0;i<cube.size;i++) {
-        for(int j=0;j<MAX_POINTS;j++) {
-            salvos[i].raindrops[j].raindrop.y+=salvos[i].raindrops[j].speed;
-          	if(salvos[i].raindrops[j].speed>0) {
-                if(salvos[i].raindrops[j].raindrop.y<cube.size) {
-                  	if(salvos[i].raindrops[j].flipped)
-                  		salvos[i].raindrops[j].color=cube.lerpColor(salvos[i].raindrops[j].color, black, abs(j-i), abs(salvos[i].raindrops[j].speed), fadingMax);
-                }
-                else {
-                  	if(salvos[i].raindrops[j].flipped)
-                      	salvos[i].raindrops[j].dead=true;
-                  	else {
-                        salvos[i].raindrops[j].speed=-salvos[i].raindrops[j].speed;
-                        salvos[i].raindrops[j].flipped=true;
-                    }
-                }
-            }
-          	else {
-                if(salvos[i].raindrops[j].raindrop.y>0) {
-                  	if(salvos[i].raindrops[j].flipped)
-                  		salvos[i].raindrops[j].color=cube.lerpColor(salvos[i].raindrops[j].color, black, abs(j-i), abs(salvos[i].raindrops[j].speed), fadingMax);
-                }
-                else {
-                  	if(salvos[i].raindrops[j].flipped)
-                      	salvos[i].raindrops[j].dead=true;
-                  	else {
-                      	salvos[i].raindrops[j].speed=-salvos[i].raindrops[j].speed;
-                      	salvos[i].raindrops[j].flipped=true;
-                    }
-                }
-            }
-        }
-      	
-    	int offCube=true;
-      	for(int j=0;j<MAX_POINTS;j++) {
-          	if(!salvos[i].raindrops[j].dead) {
-				offCube=false;
-              	break;
-            }
-        }
-      	if(offCube)
-            salvos[i].dead=true;
-    }
-}
-
-float setNewSpeed() {
-  	float ret;
-    int rndSpeed=0+(rand()%7);
-    switch(rndSpeed) {
-      case 0:
-        ret=0.5;
-        break;
-      case 1:
-        ret=-0.5;
-        break;
-      case 2:
-        ret=0.15;
-        break;
-      case 3:
-        ret=-0.15;
-        break;
-      case 4:
-        ret=0.25;
-        break;
-      case 5:
-        ret=-0.25;
-        break;
-      case 6:
-        ret=0.35;
-        break;
-      case 7:
-        ret=-0.35;
-        break;
-      default:
-        ret=SPEED;
-        break;
-    }
-  	return ret;
-}
-
-void initSalvos() {
-    for(int i=0;i<cube.size;i++) {
-        for(int j=0;j<MAX_POINTS;j++) {
-            salvos[i].raindrops[j].raindrop.x=-1;
-            salvos[i].raindrops[j].raindrop.z=-1;
-          	salvos[i].raindrops[j].speed=0;
-          	salvos[i].raindrops[j].flipped=false;
-          	salvos[i].raindrops[j].color=black;
-          	salvos[i].raindrops[j].dead=true;
-        }
-        salvos[i].dead=true;
-    }
-}
-
-void runPurpleRain() {
-  	background(black);
-	checkMicrophone();
-  	updateSalvos();
-    drawSalvos();
-  	delay(10);
-}
-
-void initPurpleRain() {
-  initMicrophone();
-  initSalvos();    
 }
 
 /***************************************
